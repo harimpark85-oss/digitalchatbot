@@ -4343,10 +4343,11 @@ Reply with JSON only: {"reply": "BUBARI's next message"}`;
     if (pins) pins.innerHTML = ev26PinHTML();
     const ab = $("aibBox");
     if (ab) {
-      const had = document.activeElement && document.activeElement.id === "bubIn";
+      if (lmComposing && ab.contains(document.activeElement)) { lmPendingRender = true; return; }
+      const caret = caretSave(ab);
       ab.innerHTML = bubHTML();
       const box = $("bubLog"); if (box) box.scrollTop = box.scrollHeight;
-      const i = had && $("bubIn"); if (i) { i.focus(); i.selectionStart = i.selectionEnd = i.value.length; }
+      if (caret) caretRestore(caret);
     }
   }
   function ev26Tick() {
@@ -6469,9 +6470,28 @@ Fans recognize the visitor only as far as this history supports: with no history
     const i = $("lmIn"); if (i) i.focus();
   }
   function renderBrief() { const b = $("lmBrief"); if (b && S.on) b.innerHTML = briefHTML(S.mode); }
+  // While a Korean syllable is still being composed (IME), re-drawing the input would break it and
+  // move the caret, so screen updates wait until the syllable is finished.
+  var lmComposing = false, lmPendingRender = false;
+  function caretSave(root) {
+    const a = document.activeElement;
+    if (!a || !a.id || !root.contains(a) || !(a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && /^(text|search|)$/.test(a.type)))) return null;
+    return { id: a.id, v: a.value, s: a.selectionStart, e: a.selectionEnd, top: a.scrollTop };
+  }
+  function caretRestore(k) {
+    const n = k && $(k.id);
+    if (!n || S.busy || n.disabled) return;
+    n.focus();
+    try {
+      if (n.value === k.v) { n.setSelectionRange(k.s, k.e); n.scrollTop = k.top; }
+      else n.setSelectionRange(n.value.length, n.value.length);  // the text changed (e.g. just sent): caret to the end
+    } catch {}
+  }
   function renderDevice() {
     const d = $("lmDevice");
     if (!d || !S.on) return;
+    if (lmComposing) { lmPendingRender = true; return; }
+    const caret = caretSave(d);
     const active = document.activeElement && document.activeElement.id;
     const fs = d.querySelector(".feed-scroll"), feedTop = fs ? fs.scrollTop : 0;
     d.innerHTML = ({ pc: viewPC, cafe: viewCafe, app: viewApp, ai: viewAI })[S.mode]();
@@ -6480,8 +6500,15 @@ Fans recognize the visitor only as far as this history supports: with no history
     if (sc) sc.scrollTop = sc.scrollHeight;
     const cl = $("cmtList"); if (cl) cl.scrollTop = cl.scrollHeight;
     S[S.mode].unseen = 0; S[S.mode].paused = false;
-    if (active && $(active) && !S.busy) $(active).focus();
+    if (caret) caretRestore(caret);
+    else if (active && $(active) && !S.busy) $(active).focus();
   }
+  document.addEventListener("compositionstart", (e) => { if (e.target.closest && e.target.closest("#lmDevice")) lmComposing = true; }, true);
+  document.addEventListener("compositionend", () => {
+    if (!lmComposing) return;
+    lmComposing = false;
+    if (lmPendingRender) { lmPendingRender = false; setTimeout(() => { if (!lmComposing) renderDevice(); }, 0); }
+  }, true);
   function renderInput() {
     for (const b of document.querySelectorAll("#lmDevice [data-lm-send]")) b.disabled = S.mode === "pc" ? !!(S.blocked || ev98Offline()) : !can();
     const i = $("lmIn"); if (i && S.mode !== "pc" && S.mode !== "cafe") i.disabled = !can();
